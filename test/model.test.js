@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {filterRecords,summarize,validateState,csvCell} from '../public/model.js';
+const source=JSON.parse(readFileSync(new URL('../public/workbook.json',import.meta.url)));
+const state={version:2,...source,groups:[{id:'g',name:'공정+A+C',lineIds:['process','tk-a','tk-c']}]};
+const oxygen=source.items.find(i=>i.name==='산소');
+ test('all extracted workbook records reference valid targets and items',()=>{assert.equal(validateState(state),state);assert.equal(source.lines.length,10);assert.equal(source.items.length,16);assert.equal(source.records.length,72012);assert.ok(source.records.some(r=>r.value===0));assert.ok(source.records.some(r=>r.value<0));});
+ test('line group and item and dates intersect without leaking other tanks',()=>{const records=filterRecords(source.records,['process','tk-a','tk-c'],oxygen.id,'2026-01-01','2026-01-31');assert.ok(records.length>0);assert.ok(records.every(r=>['process','tk-a','tk-c'].includes(r.lineId)&&r.itemId===oxygen.id&&r.date.startsWith('2026-01')));assert.equal(filterRecords(source.records,[],oxygen.id).length,0);});
+ test('line independent limits and one-sided specifications',()=>{const rs=[{value:1},{value:2},{value:3}];const s=summarize(rs,{lower:null,upper:2.5});assert.equal(s.out,1);assert.ok(s.cpk>0);assert.equal(s.cp,null);assert.equal(summarize(rs,{lower:null,upper:null}).out,null);assert.equal(summarize(rs,{lower:null,upper:null}).cpk,null);});
+ test('backup rejects dangling references and impossible dates',()=>{assert.throws(()=>validateState({...state,records:[{...source.records[0],lineId:'missing'}]}));assert.throws(()=>validateState({...state,records:[{...source.records[0],date:'2026-02-30'}]}));});
+ test('CSV escapes spreadsheet formulas and quotes',()=>{assert.equal(csvCell('=SUM(1,2)'),`"'=SUM(1,2)"`);assert.equal(csvCell('a"b'),'"a""b"');});
