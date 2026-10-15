@@ -24,9 +24,9 @@ function renderAllCharts(lines){
  for(const {item,series} of groups){
   const card=document.createElement('section');card.className='card chart-card item-chart-card';card.dataset.item=item.id;card.id='analysis-chart-'+item.id;
   const head=document.createElement('div');head.className='section-head';const info=document.createElement('div'),title=document.createElement('h3');title.textContent=item.name;info.append(title);
-  const spec=document.createElement('p');spec.className='muted';spec.textContent=`단위 ${item.unit||'미확인'} · 하한 ${specText(item.lower)} / 상한 ${specText(item.upper)} · ${series.reduce((n,s)=>n+s.records.length,0).toLocaleString()}건`;info.append(spec);head.append(info);
+  const spec=document.createElement('p');spec.className='muted';spec.textContent=`단위 ${item.unit||'미확인'} · 하한 ${specText(item.lower)} / 상한 ${specText(item.upper)} · ${$('from').value||'시작 제한 없음'} ~ ${$('to').value||'종료 제한 없음'} · ${series.reduce((n,s)=>n+s.records.length,0).toLocaleString()}건 전체 표시`;info.append(spec);head.append(info);
   const button=document.createElement('button');button.className='secondary';button.textContent='이 항목 기록 / 규격 선택';button.onclick=()=>{itemId=item.id;$('entry-item').value=itemId;refresh();$('item').focus();};head.append(button);card.append(head);
-  for(const moving of [false,true]){const heading=document.createElement('h4');heading.textContent=moving?'이동범위 관리도 (MR)':'개별값 관리도 (I)';card.append(heading);const host=document.createElement('div');host.className='item-chart-plot';host.dataset.kind=moving?'mr':'i';card.append(host);drawSeries(host,series,moving);}
+  for(const moving of [false,true]){const heading=document.createElement('h4');heading.textContent=moving?'이동범위 관리도 (MR)':'개별값 관리도 (I)';card.append(heading);const host=document.createElement('div');host.className='item-chart-plot';host.dataset.kind=moving?'mr':'i';card.append(host);drawSeries(host,series,moving,{from:$('from').value,to:$('to').value});}
   $('all-item-charts').append(card);
   const link=document.createElement('a');link.href='#'+card.id;link.textContent=item.name;$('chart-index').append(link);
  }

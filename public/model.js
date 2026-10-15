@@ -61,3 +61,13 @@ export function allItemSeries(records,lines,items,from='',to=''){
  for(const r of records){if(!selected.has(r.lineId)||!buckets.has(r.itemId)||(from&&r.date<from)||(to&&r.date>to))continue;buckets.get(r.itemId).get(r.lineId).push(r);}
  return items.map(item=>({item,series:lines.map(line=>{const rs=buckets.get(item.id).get(line.id);rs.sort((a,b)=>a.date.localeCompare(b.date)||a.sequence-b.sequence||a.id.localeCompare(b.id));return {...line,records:rs,stats:summarize(rs,item)};})}));
 }
+
+export function chartDateDomain(records,from='',to=''){
+ const day=86400000;
+ const dates=records.map(r=>r.date).sort();
+ const first=from||dates[0],last=to||dates.at(-1);
+ if(!first||!last||first>last)return null;
+ const start=Date.parse(first+'T00:00:00Z'),end=Date.parse(last+'T00:00:00Z')+day;
+ const sequences=new Map();for(const r of records)sequences.set(r.date,Math.max(sequences.get(r.date)||0,r.sequence));
+ return {first,last,start,end,position:r=>(Date.parse(r.date+'T00:00:00Z')+day*r.sequence/((sequences.get(r.date)||1)+1)-start)/(end-start)};
+}
