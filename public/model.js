@@ -54,3 +54,10 @@ export function buildBatch(rows,records,lineId,itemId,date,createId){
  if(!result.length)throw Error('측정값을 한 개 이상 입력하세요.');
  return result;
 }
+
+// Apply shared line/date filters, but keep every analysis item and line separate.
+export function allItemSeries(records,lines,items,from='',to=''){
+ const selected=new Set(lines.map(l=>l.id)),buckets=new Map(items.map(i=>[i.id,new Map(lines.map(l=>[l.id,[]]))]));
+ for(const r of records){if(!selected.has(r.lineId)||!buckets.has(r.itemId)||(from&&r.date<from)||(to&&r.date>to))continue;buckets.get(r.itemId).get(r.lineId).push(r);}
+ return items.map(item=>({item,series:lines.map(line=>{const rs=buckets.get(item.id).get(line.id);rs.sort((a,b)=>a.date.localeCompare(b.date)||a.sequence-b.sequence||a.id.localeCompare(b.id));return {...line,records:rs,stats:summarize(rs,item)};})}));
+}

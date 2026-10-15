@@ -1,4 +1,4 @@
-import {filterRecords,summarize,validateState,csvCell,isND,specText,judgement,buildBatch,parseMeasurementPaste} from './model.js';
+import {filterRecords,summarize,validateState,csvCell,isND,specText,judgement,buildBatch,parseMeasurementPaste,allItemSeries} from './model.js';
 import {drawSeries} from './chart.js';
 const $=id=>document.getElementById(id),f=v=>v===null||!Number.isFinite(v)?'—':Number(v.toFixed(5)).toLocaleString('ko-KR',{maximumFractionDigits:5});
 let state,source,db,selected=[],itemId,page=0,editing=null,busy=false;
@@ -15,6 +15,23 @@ function lineName(id){return state.lines.find(l=>l.id===id)?.name||id;}
 function itemName(id){return state.items.find(l=>l.id===id)?.name||id;}
 function cells(row,values){for(const v of values){const c=document.createElement('td');c.textContent=v;row.append(c);}}
 function refresh(){page=0;render();}
+let chartCache=null;
+function renderAllCharts(lines){
+ const key=JSON.stringify([lines.map(l=>l.id),$('from').value,$('to').value]);
+ if(chartCache?.state===state&&chartCache.key===key)return;
+ const groups=allItemSeries(state.records,lines,state.items,$('from').value,$('to').value);
+ $('all-item-charts').replaceChildren();$('chart-index').replaceChildren();$('all-charts-count').textContent=`${groups.length}개 항목 · ${lines.length}개 라인`;
+ for(const {item,series} of groups){
+  const card=document.createElement('section');card.className='card chart-card item-chart-card';card.dataset.item=item.id;card.id='analysis-chart-'+item.id;
+  const head=document.createElement('div');head.className='section-head';const info=document.createElement('div'),title=document.createElement('h3');title.textContent=item.name;info.append(title);
+  const spec=document.createElement('p');spec.className='muted';spec.textContent=`단위 ${item.unit||'미확인'} · 하한 ${specText(item.lower)} / 상한 ${specText(item.upper)} · ${series.reduce((n,s)=>n+s.records.length,0).toLocaleString()}건`;info.append(spec);head.append(info);
+  const button=document.createElement('button');button.className='secondary';button.textContent='이 항목 기록 / 규격 선택';button.onclick=()=>{itemId=item.id;$('entry-item').value=itemId;refresh();$('item').focus();};head.append(button);card.append(head);
+  for(const moving of [false,true]){const heading=document.createElement('h4');heading.textContent=moving?'이동범위 관리도 (MR)':'개별값 관리도 (I)';card.append(heading);const host=document.createElement('div');host.className='item-chart-plot';host.dataset.kind=moving?'mr':'i';card.append(host);drawSeries(host,series,moving);}
+  $('all-item-charts').append(card);
+  const link=document.createElement('a');link.href='#'+card.id;link.textContent=item.name;$('chart-index').append(link);
+ }
+ chartCache={state,key};
+}
 function render(){
  selected=selected.filter(id=>state.lines.some(l=>l.id===id));if(!state.items.some(i=>i.id===itemId))itemId=state.items[0].id;
  const current=state.items.find(i=>i.id===itemId),records=visible();
@@ -26,9 +43,7 @@ function render(){
  $('metrics').replaceChildren();const violations=records.filter(r=>judgement(r,current)==='규격 이탈').length;
  for(const [label,value,sub]of [['선택 대상',selected.length+'개','라인별 독립 분석'],['분석 항목',current.name,current.unit||'단위 확인 필요'],['측정 기록',records.length.toLocaleString()+'건','조회 조건에 해당하는 기록'],['규격 이탈',current.lower===null&&current.upper===null?'미설정':violations.toLocaleString()+'건','항목 설정에서 규격을 확인하세요']]){const card=document.createElement('div');card.className='card metric';for(const [tag,text]of [['p',label],['strong',value],['small',sub]]){const e=document.createElement(tag);e.textContent=text;card.append(e);}$('metrics').append(card);}
  $('summary').replaceChildren();for(const l of lines){const rs=records.filter(r=>r.lineId===l.id),s=summarize(rs,current),tr=document.createElement('tr');cells(tr,[l.name,s.n,f(s.mean),s.out===null?'미설정':`${s.out}${s.unknown?' / 판정 불가 '+s.unknown:''}`,f(s.cpk)+(s.cpk!==null&&s.numericN<25?' (참고용)':''),s.ucl===null?'—':s.signals]);$('summary').append(tr);}
- const series=lines.map(l=>{const rs=records.filter(r=>r.lineId===l.id);return {...l,records:rs,stats:summarize(rs,current)};});
- drawSeries('chart',series,false);drawSeries('mr-chart',series,true);
- $('spec-label').textContent=`${current.name} (${current.unit||'단위 미확인'}) · 하한 ${specText(current.lower)} / 상한 ${specText(current.upper)} · 선택 ${lines.length}개 라인 · 라인별 최근 300점 · 가로축: 측정 날짜 / 당일 순번 · ND는 통계 계산 제외`;
+ renderAllCharts(lines);
  $('record-count').textContent=records.length.toLocaleString()+'건';$('rows').replaceChildren();$('empty').hidden=records.length>0;
  page=Math.max(0,Math.min(page,Math.ceil(records.length/pageSize)-1));const newest=[...records].reverse();for(const r of newest.slice(page*pageSize,(page+1)*pageSize)){const tr=document.createElement('tr'),out=judgement(r,current)==='규격 이탈';cells(tr,[`${r.date} / ${r.sequence}`,lineName(r.lineId),itemName(r.itemId),isND(r)?'미검출 (ND)':`${r.value} ${current.unit}`,judgement(r,current),r.note+(r.sourceCell?` [엑셀 ${r.sourceCell}]`:'')]);tr.children[4].className=judgement(r,current)==='적합'?'pass':out?'fail':'';const td=document.createElement('td'),b=document.createElement('button');b.className='delete';b.textContent='삭제';b.onclick=async()=>{if(confirm('이 측정 기록을 삭제할까요?'))await commit({...state,records:state.records.filter(x=>x.id!==r.id)});};td.append(b);tr.append(td);$('rows').append(tr);}
  $('page-label').textContent=`${records.length?page+1:0} / ${Math.ceil(records.length/pageSize)} 페이지`;$('previous').disabled=page===0;$('next').disabled=(page+1)*pageSize>=records.length;

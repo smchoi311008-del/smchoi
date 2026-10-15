@@ -1,7 +1,7 @@
 import {isND} from './model.js';
 const colors=['#4168e8','#d76835','#0c937c','#a14eb9','#b59214','#d04b7a','#2585a7','#735444','#518c30','#636b86'];
 export function drawSeries(target,series,moving=false){
- const host=document.getElementById(target);host.replaceChildren();
+ const host=typeof target==='string'?document.getElementById(target):target;host.replaceChildren();
  const prepared=series.map((s,i)=>({...s,color:colors[i%colors.length],points:s.records.map((r,j)=>({...r,y:moving?(j>0&&!isND(r)&&!isND(s.records[j-1])?Math.abs(r.value-s.records[j-1].value):null):isND(r)?null:r.value})).slice(-300)}));
  const legend=document.createElement('div');legend.className='series-legend';
  for(const s of prepared){const label=document.createElement('span');label.style.color=s.color;label.textContent=`● ${s.name} (${s.records.length}건 / ND ${s.stats.ndCount}건)`;legend.append(label);}host.append(legend);
