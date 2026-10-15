@@ -33,3 +33,24 @@ export function validateState(s){
  return s;
 }
 export const csvCell=value=>'"'+String(value??'').replace(/^[=+@\-\t\r]/,"'$&").replaceAll('"','""')+'"';
+
+export function parseMeasurement(text){
+ const raw=String(text).trim();
+ if(!raw)return null;
+ if(/^(ND|미검출)$/i.test(raw))return {value:null,result:'ND'};
+ if(!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(raw)||!Number.isFinite(Number(raw)))throw Error('숫자 또는 미검출(ND)을 입력하세요.');
+ return {value:Number(raw),result:'numeric'};
+}
+export function parseMeasurementPaste(text,remaining=10){
+ const rows=text.replace(/\r\n?/g,'\n').replace(/\n+$/,'').split('\n').map(r=>r.split('\t'));
+ const grid=rows.length===1&&rows[0].length>2?rows[0].map(v=>[v]):rows;
+ if(grid.length>remaining||grid.some(r=>r.length>2))throw Error(`남은 ${remaining}행 이내로 측정값 1열 또는 측정값·비고 2열을 붙여넣으세요.`);
+ return grid.map(([value,note=''])=>{parseMeasurement(value);if(note.length>200)throw Error('비고는 200자 이내로 입력하세요.');return {text:value.trim(),note};});
+}
+export function buildBatch(rows,records,lineId,itemId,date,createId){
+ const base=records.reduce((n,r)=>r.lineId===lineId&&r.itemId===itemId&&r.date===date?Math.max(n,r.sequence):n,0);
+ const result=[];
+ rows.forEach((row,index)=>{let parsed;try{parsed=parseMeasurement(row.text);}catch(e){throw Error(`${index+1}회: ${e.message}`);}if(!parsed){if(row.note.trim())throw Error(`${index+1}회: 비고에 해당하는 측정값을 입력하세요.`);return;}result.push({id:createId(),lineId,itemId,date,sequence:base+index+1,...parsed,note:row.note.trim()});});
+ if(!result.length)throw Error('측정값을 한 개 이상 입력하세요.');
+ return result;
+}

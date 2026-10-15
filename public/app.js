@@ -1,4 +1,4 @@
-import {filterRecords,summarize,validateState,csvCell,isND,specText,judgement} from './model.js';
+import {filterRecords,summarize,validateState,csvCell,isND,specText,judgement,buildBatch,parseMeasurementPaste} from './model.js';
 import {drawSeries} from './chart.js';
 const $=id=>document.getElementById(id),f=v=>v===null||!Number.isFinite(v)?'—':Number(v.toFixed(5)).toLocaleString('ko-KR',{maximumFractionDigits:5});
 let state,source,db,selected=[],itemId,page=0,editing=null,busy=false;
@@ -43,7 +43,25 @@ $('line-add').onclick=async()=>{const name=prompt('추가할 공정 또는 저�
 function editItem(add){editing=add?null:itemId;const item=add?{name:'',unit:'',instrument:'',lower:null,upper:null}:state.items.find(i=>i.id===itemId);for(const k of ['name','unit','instrument','lower','upper'])$('item-form').elements.namedItem(k).value=item[k]??'';for(const k of ['lower','upper']){const t=$('item-form').elements.namedItem(k+'Type'),v=$('item-form').elements.namedItem(k);t.value=item[k]==='ND'?'ND':'numeric';v.value=item[k]==='ND'?'':item[k]??'';v.disabled=t.value==='ND';}$('item-dialog').showModal();}
 $('item-add').onclick=()=>editItem(true);$('item-edit').onclick=()=>editItem(false);$('item-cancel').onclick=()=>$('item-dialog').close();
 $('item-form').onsubmit=async e=>{e.preventDefault();const d=new FormData(e.target),item={id:editing||crypto.randomUUID(),name:d.get('name').trim(),unit:d.get('unit').trim(),instrument:d.get('instrument').trim(),lower:d.get('lowerType')==='ND'?'ND':d.get('lower')===''?null:Number(d.get('lower')),upper:d.get('upperType')==='ND'?'ND':d.get('upper')===''?null:Number(d.get('upper'))};if(!item.name||state.items.some(i=>i.id!==item.id&&i.name===item.name))return message('항목명을 확인하세요. 같은 이름의 항목은 추가할 수 없습니다.',true);try{validateState({...state,items:[...state.items.filter(i=>i.id!==item.id),item]});}catch{return alert('규격 상한은 하한보다 커야 합니다. 미검출 규격과 수치 규격은 함께 설정할 수 없습니다.');}if(await commit({...state,items:editing?state.items.map(i=>i.id===editing?item:i):[...state.items,item]})){itemId=item.id;$('entry-item').value=itemId;refresh();$('item-dialog').close();}};
-$('entry-form').onsubmit=async e=>{e.preventDefault();const lineId=$('entry-line').value,entryItem=$('entry-item').value,date=$('date').value,value=$('result').value==='ND'?null:Number($('value').value);if($('result').value!=='ND'&&!Number.isFinite(value))return;const sequence=state.records.reduce((n,r)=>r.lineId===lineId&&r.itemId===entryItem&&r.date===date?Math.max(n,r.sequence):n,0)+1;const r={id:crypto.randomUUID(),lineId,itemId:entryItem,date,value,result:$('result').value,sequence,note:$('note').value.trim()};if(await commit({...state,records:[...state.records,r]})){if(!selected.includes(lineId))selected=[...selected,lineId];itemId=entryItem;$('from').value=$('to').value='';$('value').value=$('note').value='';refresh();message('측정값을 저장했습니다. 입력한 대상과 항목으로 조회합니다.');}};
+const batchRows=[];
+for(let i=0;i<10;i++){
+ const tr=document.createElement('tr'),th=document.createElement('th');th.scope='row';th.textContent=`${i+1}회`;tr.append(th);
+ const value=document.createElement('input');value.type='text';value.inputMode='decimal';value.placeholder='숫자 또는 ND';value.setAttribute('aria-label',`${i+1}회 측정값`);value.className='batch-value';
+ const note=document.createElement('input');note.type='text';note.maxLength=200;note.setAttribute('aria-label',`${i+1}회 비고`);note.placeholder='비고 (선택)';
+ for(const input of [value,note]){const td=document.createElement('td');td.append(input);tr.append(td);input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();if(i<9)batchRows[i+1][input===value?'value':'note'].focus();else $('entry-submit').focus();}};}
+ value.onpaste=e=>{const text=e.clipboardData.getData('text/plain');if(!/[\t\r\n]/.test(text))return;e.preventDefault();try{const grid=parseMeasurementPaste(text,10-i);grid.forEach((r,j)=>{batchRows[i+j].value.value=r.text;batchRows[i+j].note.value=r.note;});$('batch-error').hidden=true;}catch(error){$('batch-error').hidden=false;$('batch-error').textContent=error.message;}};
+ batchRows.push({value,note});$('batch-rows').append(tr);
+}
+function clearBatch(){for(const row of batchRows){row.value.value='';row.note.value='';}$('batch-error').hidden=true;}
+$('batch-clear').onclick=()=>{if(batchRows.some(r=>r.value.value||r.note.value)&&!confirm('아직 저장하지 않은 10회 입력 내용을 비울까요?'))return;clearBatch();batchRows[0].value.focus();};
+$('entry-form').onsubmit=async e=>{
+ e.preventDefault();if(busy)return;
+ const lineId=$('entry-line').value,entryItem=$('entry-item').value,date=$('date').value;
+ let entries;try{entries=buildBatch(batchRows.map(r=>({text:r.value.value,note:r.note.value})),state.records,lineId,entryItem,date,()=>crypto.randomUUID());}catch(error){$('batch-error').hidden=false;$('batch-error').textContent=error.message;return;}
+ const controls=[...$('entry-form').querySelectorAll('input,select,button')];controls.forEach(c=>c.disabled=true);
+ try{if(await commit({...state,records:[...state.records,...entries]})){if(!selected.includes(lineId))selected=[...selected,lineId];itemId=entryItem;$('from').value=$('to').value='';clearBatch();refresh();message(`측정값 ${entries.length}건을 저장했습니다. 기존 기록 다음 순번으로 추가했습니다.`);}}
+ finally{controls.forEach(c=>c.disabled=false);batchRows[0].value.focus();}
+};
 $('import-source').onclick=async()=>{if(busy||state.sourceImported)return;if(!confirm(`첨부 엑셀의 ${source.records.length.toLocaleString()}건을 불러올까요? 현재 기록은 유지합니다. 단위와 규격은 확인 후 설정하세요.`))return;$('import-source').disabled=true;const existing=new Set(state.records.map(r=>r.id));const newLines=source.lines.filter(l=>!state.lines.some(x=>x.id===l.id)),newItems=source.items.filter(i=>!state.items.some(x=>x.id===i.id));if(await commit({...state,sourceImported:true,lines:[...state.lines,...newLines],items:[...state.items,...newItems],records:[...state.records,...source.records.filter(r=>!existing.has(r.id))]}))message('첨부 엑셀 측정값을 불러왔습니다. 원본은 변경하지 않았습니다. 단위와 규격을 확인하세요.');else $('import-source').disabled=false;};
 function download(name,text,type){const url=URL.createObjectURL(new Blob([text],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 $('export').onclick=()=>{const item=state.items.find(i=>i.id===itemId),rows=[['날짜','당일순번','대상','분석항목','단위','규격하한','규격상한','측정값','비고','원본셀'],...visible().map(r=>[r.date,r.sequence,lineName(r.lineId),item.name,item.unit,specText(item.lower),specText(item.upper),isND(r)?'미검출 (ND)':r.value,r.note,r.sourceCell||''])];download('SPC_조회결과.csv','\uFEFF'+rows.map(r=>r.map(csvCell).join(',')).join('\r\n'),'text/csv;charset=utf-8');};
@@ -51,7 +69,7 @@ $('backup').onclick=()=>download('SPC_전체백업.json',JSON.stringify(state),'
 $('restore').onchange=async()=>{const file=$('restore').files[0];if(!file)return;try{const next=validateState(JSON.parse(await file.text()));if(confirm('현재 데이터 전체를 백업 파일 내용으로 교체할까요? 먼저 전체 백업을 권장합니다.')){if(await commit(next)){selected=state.lines.map(l=>l.id);itemId=state.items[0].id;refresh();message('전체 백업을 복원했습니다.');}}}catch(e){message('복원하지 않았습니다: '+e.message,true);}$('restore').value='';};
 $('previous').onclick=()=>{page--;render();};$('next').onclick=()=>{page++;render();};
 for(const k of ['lower','upper'])$('item-form').elements.namedItem(k+'Type').onchange=()=>{const f=$('item-form').elements;f.namedItem(k).disabled=f.namedItem(k+'Type').value==='ND';};
-$('result').onchange=()=>{$('value').disabled=$('result').value==='ND';$('value').required=$('result').value!=='ND';};
+
 async function init(){try{
  source=await fetch('/workbook.json').then(r=>{if(!r.ok)throw Error('원본 목록을 불러오지 못했습니다.');return r.json();});db=await openDB();const saved=await readDB();
  state=saved?validateState(saved):{version:2,lines:source.lines,items:source.items,records:[],groups:[{id:'process-a-c',name:'공정 + 저장탱크 A + C',lineIds:['process','tk-a','tk-c']}],sourceImported:false};
